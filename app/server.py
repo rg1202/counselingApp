@@ -59,7 +59,7 @@ def krisp_discovery():
             metadata = candidate
             break
         except HTTPError as exc:
-            failures.append(f'HTTP {exc.code}')
+            failures.append(f'{url}: HTTP {exc.code}')
     if not metadata: raise ValueError('Krisp authorization metadata failed (' + '; '.join(failures) + ').')
     for key in ('authorization_endpoint', 'token_endpoint'):
         if not metadata.get(key, '').startswith('https://'): raise ValueError('Invalid Krisp OAuth metadata.')
