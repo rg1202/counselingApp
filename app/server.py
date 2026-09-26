@@ -329,8 +329,9 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == '/krisp/meetings':
                 query = str(body.get('query', '')).strip()[:100]
                 args = {'limit': 50, 'fields': ['name', 'date', 'transcript']}
+                args['offset'] = max(0, min(int(body.get('offset', 0)), 100000))
                 if query: args['search'] = query
-                else: args['after'] = __import__('datetime').date.today().isoformat()[:4] + '-01-01'
+                else: args['after'] = '2000-01-01'
                 result = krisp_tool('search_meetings', args)
                 items = find_items(result)
                 meetings = []
@@ -338,7 +339,8 @@ class Handler(BaseHTTPRequestHandler):
                     ident = str(item.get('meeting_id') or item.get('document_id') or item.get('id') or '').replace('-', '')
                     if re.fullmatch('[0-9a-f]{32}', ident):
                         meetings.append({'id': ident, 'title': str(item.get('title') or item.get('name') or 'Untitled meeting'), 'date': str(item.get('date') or item.get('started_at') or item.get('start_time') or '')})
-                return self.reply(200, {'meetings': meetings})
+                return self.reply(200, {'meetings': meetings, 'hasMore': len(items) >= 50,
+                                        'nextOffset': args['offset'] + len(items)})
             if self.path == '/krisp/transcript':
                 ident = str(body.get('id', ''))
                 if not re.fullmatch('[0-9a-f]{32}', ident): raise ValueError('Invalid Krisp document ID.')
