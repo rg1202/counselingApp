@@ -1,23 +1,70 @@
 #!/usr/bin/env python3
 """Local transcript note workbench. Binds to loopback only."""
 import base64
+import hashlib
 import io
 import json
 import os
 import re
+import secrets
+import time
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlencode, urlparse, parse_qs
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 ROOT = Path(__file__).parent
 MAX_BYTES = 12 * 1024 * 1024
 KRISP_MCP = 'https://mcp.krisp.ai/mcp'
+KRISP_REDIRECT = 'http://127.0.0.1:8765/krisp/callback'
+krisp_auth = {'access_token': None, 'refresh_token': None, 'expires_at': 0, 'state': None}
+
+def krisp_discovery():
+    with urlopen(KRISP_MCP + '/.well-known/oauth-protected-resource', timeout=15) as response:
+        resource = json.load(response)
+    issuer = resource['authorization_servers'][0].rstrip('/')
+    if not issuer.startswith('https://'): raise ValueError('Krisp authorization server must use HTTPS.')
+    with urlopen(issuer + '/.well-known/oauth-authorization-server', timeout=15) as response:
+        metadata = json.load(response)
+    for key in ('authorization_endpoint', 'token_endpoint'):
+        if not metadata.get(key, '').startswith('https://'): raise ValueError('Invalid Krisp OAuth metadata.')
+    return metadata
+
+def krisp_client(metadata):
+    client_id = os.environ.get('KRISP_CLIENT_ID')
+    if client_id: return client_id
+    registration = metadata.get('registration_endpoint')
+    if not registration or not registration.startswith('https://'):
+        raise ValueError('Krisp requires a registered OAuth client. Set KRISP_CLIENT_ID for this local app.')
+    data = json.dumps({'client_name': 'Session Notes Local', 'redirect_uris': [KRISP_REDIRECT],
+                       'grant_types': ['authorization_code', 'refresh_token'],
+                       'response_types': ['code'], 'token_endpoint_auth_method': 'none'}).encode()
+    with urlopen(Request(registration, data=data, headers={'Content-Type': 'application/json'}), timeout=15) as response:
+        return json.load(response)['client_id']
+
+def krisp_tokens(fields):
+    data = urlencode(fields).encode()
+    with urlopen(Request(krisp_auth['metadata']['token_endpoint'], data=data,
+                         headers={'Content-Type': 'application/x-www-form-urlencoded'}), timeout=20) as response:
+        tokens = json.load(response)
+    krisp_auth['access_token'] = tokens['access_token']
+    krisp_auth['refresh_token'] = tokens.get('refresh_token', krisp_auth['refresh_token'])
+    krisp_auth['expires_at'] = time.time() + int(tokens.get('expires_in', 3600)) - 60
+
+def krisp_access_token():
+    if not krisp_auth['access_token']:
+        # An existing OAuth access token can also be supplied for short-lived local use.
+        token = os.environ.get('KRISP_ACCESS_TOKEN')
+        if not token: raise ValueError('Krisp is not connected. Click Connect Krisp first.')
+        return token
+    if krisp_auth['refresh_token'] and time.time() >= krisp_auth['expires_at']:
+        krisp_tokens({'grant_type': 'refresh_token', 'refresh_token': krisp_auth['refresh_token'],
+                      'client_id': krisp_auth['client_id']})
+    return krisp_auth['access_token']
 
 def krisp_call(method, params=None, session=None):
-    token = os.environ.get('KRISP_ACCESS_TOKEN')
-    if not token:
-        raise ValueError('Krisp is not connected. Set a Krisp OAuth access token in KRISP_ACCESS_TOKEN on the local server.')
+    token = krisp_access_token()
     headers = {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream'}
     if session: headers['Mcp-Session-Id'] = session
     data = json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': params or {}}).encode()
@@ -33,6 +80,10 @@ def krisp_call(method, params=None, session=None):
 
 def krisp_tool(name, args):
     _, session = krisp_call('initialize', {'protocolVersion': '2025-03-26', 'capabilities': {}, 'clientInfo': {'name': 'session-notes-local', 'version': '0.1'}})
+    headers = {'Authorization': 'Bearer ' + krisp_access_token(), 'Content-Type': 'application/json'}
+    if session: headers['Mcp-Session-Id'] = session
+    notice = json.dumps({'jsonrpc': '2.0', 'method': 'notifications/initialized'}).encode()
+    with urlopen(Request(KRISP_MCP, data=notice, headers=headers), timeout=15): pass
     result, _ = krisp_call('tools/call', {'name': name, 'arguments': args}, session)
     if result.get('isError'): raise ValueError('Krisp tool returned an error: ' + str(result.get('content', ''))[:500])
     if result.get('structuredContent'): return result['structuredContent']
@@ -56,12 +107,14 @@ def find_items(value):
     return []
 
 def transcript_text(value):
-    if isinstance(value, str): return value
+    if isinstance(value, str):
+        parts = re.split(r'(?m)^#{1,3} Transcript\s*$', value)
+        return parts[-1].strip() if len(parts) > 1 else value
     if isinstance(value, list): return '\n'.join(filter(None, (transcript_text(x) for x in value)))
     if isinstance(value, dict):
         if 'text' in value and ('speaker' in value or 'speaker_name' in value):
             return str(value.get('speaker') or value.get('speaker_name')) + ': ' + str(value['text'])
-        for key in ('documents', 'transcript', 'full_transcript', 'utterances', 'segments', 'text', 'content'):
+        for key in ('results', 'document', 'documents', 'transcript', 'full_transcript', 'utterances', 'segments', 'text', 'content'):
             if key in value:
                 return transcript_text(value[key])
         speaker = value.get('speaker') or value.get('speaker_name')
@@ -150,6 +203,24 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
     def do_GET(self):
+        if self.path.startswith('/krisp/callback?'):
+            params = parse_qs(urlparse(self.path).query)
+            if not krisp_auth.get('state') or params.get('state', [''])[0] != krisp_auth['state']:
+                return self.reply(400, {'error': 'Invalid Krisp authorization state.'})
+            krisp_auth['state'] = None
+            if 'error' in params: return self.reply(400, {'error': 'Krisp authorization was declined.'})
+            try:
+                krisp_tokens({'grant_type': 'authorization_code', 'code': params['code'][0],
+                              'redirect_uri': KRISP_REDIRECT, 'client_id': krisp_auth['client_id'],
+                              'code_verifier': krisp_auth.pop('verifier')})
+            except Exception:
+                return self.reply(400, {'error': 'Krisp authorization failed. Try Connect Krisp again.'})
+            page = b'<html><body><h2>Krisp connected</h2><p>Return to Session Notes and search meetings. You may close this tab.</p></body></html>'
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Content-Length', str(len(page)))
+            self.end_headers()
+            return self.wfile.write(page)
         path = '/index.html' if self.path == '/' else self.path
         if path not in ('/index.html', '/app.js', '/style.css'):
             return self.reply(404, {'error': 'Not found'})
@@ -167,6 +238,20 @@ class Handler(BaseHTTPRequestHandler):
             if size <= 0 or size > MAX_BYTES * 2:
                 raise ValueError('Request too large or empty.')
             body = json.loads(self.rfile.read(size))
+            if self.path == '/krisp/status':
+                return self.reply(200, {'connected': bool(krisp_auth['access_token'] or os.environ.get('KRISP_ACCESS_TOKEN'))})
+            if self.path == '/krisp/connect':
+                metadata = krisp_discovery()
+                client_id = krisp_client(metadata)
+                verifier = secrets.token_urlsafe(48)
+                challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b'=').decode()
+                state = secrets.token_urlsafe(24)
+                krisp_auth.update(metadata=metadata, client_id=client_id, verifier=verifier, state=state)
+                url = metadata['authorization_endpoint'] + '?' + urlencode({
+                    'response_type': 'code', 'client_id': client_id, 'redirect_uri': KRISP_REDIRECT,
+                    'state': state, 'code_challenge': challenge, 'code_challenge_method': 'S256',
+                    'scope': os.environ.get('KRISP_SCOPE', '')})
+                return self.reply(200, {'url': url})
             if self.path == '/extract':
                 data = base64.b64decode(body['data'], validate=True)
                 if len(data) > MAX_BYTES: raise ValueError('File exceeds 12 MB.')
@@ -174,18 +259,22 @@ class Handler(BaseHTTPRequestHandler):
                 if not content.strip(): raise ValueError('No text found. Scanned PDFs need OCR first.')
                 return self.reply(200, {'text': content})
             if self.path == '/krisp/meetings':
-                result = krisp_tool('search_meetings', {'query': body.get('query', '')[:100]})
+                query = str(body.get('query', '')).strip()[:100]
+                args = {'limit': 50, 'fields': ['name', 'date', 'transcript']}
+                if query: args['search'] = query
+                else: args['after'] = __import__('datetime').date.today().isoformat()[:4] + '-01-01'
+                result = krisp_tool('search_meetings', args)
                 items = find_items(result)
                 meetings = []
                 for item in items[:100]:
-                    ident = str(item.get('document_id') or item.get('id') or item.get('meeting_id') or '').replace('-', '')
+                    ident = str(item.get('meeting_id') or item.get('document_id') or item.get('id') or '').replace('-', '')
                     if re.fullmatch('[0-9a-f]{32}', ident):
                         meetings.append({'id': ident, 'title': str(item.get('title') or item.get('name') or 'Untitled meeting'), 'date': str(item.get('date') or item.get('started_at') or item.get('start_time') or '')})
                 return self.reply(200, {'meetings': meetings})
             if self.path == '/krisp/transcript':
                 ident = str(body.get('id', ''))
                 if not re.fullmatch('[0-9a-f]{32}', ident): raise ValueError('Invalid Krisp document ID.')
-                result = krisp_tool('get_multiple_documents', {'document_ids': [ident], 'include_transcript': True})
+                result = krisp_tool('get_multiple_documents', {'ids': [ident]})
                 content = transcript_text(result)
                 if not content.strip(): raise ValueError('Krisp returned no transcript for this meeting.')
                 return self.reply(200, {'text': content})
