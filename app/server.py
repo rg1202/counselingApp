@@ -21,12 +21,18 @@ KRISP_REDIRECT = 'http://127.0.0.1:8765/krisp/callback'
 krisp_auth = {'access_token': None, 'refresh_token': None, 'expires_at': 0, 'state': None}
 
 def krisp_discovery():
-    with urlopen(KRISP_MCP + '/.well-known/oauth-protected-resource', timeout=15) as response:
-        resource = json.load(response)
+    try:
+        with urlopen(KRISP_MCP + '/.well-known/oauth-protected-resource', timeout=15) as response:
+            resource = json.load(response)
+    except HTTPError as exc:
+        raise ValueError(f'Krisp OAuth discovery failed (HTTP {exc.code}).')
     issuer = resource['authorization_servers'][0].rstrip('/')
     if not issuer.startswith('https://'): raise ValueError('Krisp authorization server must use HTTPS.')
-    with urlopen(issuer + '/.well-known/oauth-authorization-server', timeout=15) as response:
-        metadata = json.load(response)
+    try:
+        with urlopen(issuer + '/.well-known/oauth-authorization-server', timeout=15) as response:
+            metadata = json.load(response)
+    except HTTPError as exc:
+        raise ValueError(f'Krisp authorization metadata failed (HTTP {exc.code}).')
     for key in ('authorization_endpoint', 'token_endpoint'):
         if not metadata.get(key, '').startswith('https://'): raise ValueError('Invalid Krisp OAuth metadata.')
     return metadata
@@ -40,8 +46,11 @@ def krisp_client(metadata):
     data = json.dumps({'client_name': 'Session Notes Local', 'redirect_uris': [KRISP_REDIRECT],
                        'grant_types': ['authorization_code', 'refresh_token'],
                        'response_types': ['code'], 'token_endpoint_auth_method': 'none'}).encode()
-    with urlopen(Request(registration, data=data, headers={'Content-Type': 'application/json'}), timeout=15) as response:
-        return json.load(response)['client_id']
+    try:
+        with urlopen(Request(registration, data=data, headers={'Content-Type': 'application/json'}), timeout=15) as response:
+            return json.load(response)['client_id']
+    except HTTPError as exc:
+        raise ValueError(f'Krisp client registration failed (HTTP {exc.code}). A registered KRISP_CLIENT_ID may be required.')
 
 def krisp_tokens(fields):
     data = urlencode(fields).encode()
