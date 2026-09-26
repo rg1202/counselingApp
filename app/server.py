@@ -21,18 +21,44 @@ KRISP_REDIRECT = 'http://127.0.0.1:8765/krisp/callback'
 krisp_auth = {'access_token': None, 'refresh_token': None, 'expires_at': 0, 'state': None}
 
 def krisp_discovery():
-    try:
-        with urlopen(KRISP_MCP + '/.well-known/oauth-protected-resource', timeout=15) as response:
-            resource = json.load(response)
-    except HTTPError as exc:
-        raise ValueError(f'Krisp OAuth discovery failed (HTTP {exc.code}).')
+    candidates = [
+        'https://mcp.krisp.ai/.well-known/oauth-protected-resource/mcp',
+        'https://mcp.krisp.ai/.well-known/oauth-protected-resource',
+        KRISP_MCP + '/.well-known/oauth-protected-resource',
+    ]
+    resource, failures = None, []
+    for url in candidates:
+        try:
+            with urlopen(Request(url, headers={'Accept': 'application/json', 'User-Agent': 'SessionNotesLocal/0.1'}), timeout=15) as response:
+                resource = json.load(response)
+            if resource.get('authorization_servers'): break
+        except HTTPError as exc:
+            failures.append(f'{urlparse(url).path}: HTTP {exc.code}')
+        except (URLError, ValueError) as exc:
+            failures.append(f'{urlparse(url).path}: {type(exc).__name__}')
+    if not resource or not resource.get('authorization_servers'):
+        raise ValueError('Krisp OAuth discovery failed at all supported URLs (' + '; '.join(failures) + ').')
     issuer = resource['authorization_servers'][0].rstrip('/')
     if not issuer.startswith('https://'): raise ValueError('Krisp authorization server must use HTTPS.')
-    try:
-        with urlopen(issuer + '/.well-known/oauth-authorization-server', timeout=15) as response:
-            metadata = json.load(response)
-    except HTTPError as exc:
-        raise ValueError(f'Krisp authorization metadata failed (HTTP {exc.code}).')
+    parsed = urlparse(issuer)
+    origin = parsed.scheme + '://' + parsed.netloc
+    suffix = parsed.path.rstrip('/')
+    metadata_urls = [origin + '/.well-known/oauth-authorization-server' + suffix,
+                     origin + '/.well-known/openid-configuration' + suffix,
+                     issuer + '/.well-known/openid-configuration']
+    metadata, failures = None, []
+    for url in metadata_urls:
+        try:
+            with urlopen(Request(url, headers={'Accept': 'application/json'}), timeout=15) as response:
+                candidate = json.load(response)
+            if candidate.get('issuer') != issuer:
+                failures.append('issuer mismatch')
+                continue
+            metadata = candidate
+            break
+        except HTTPError as exc:
+            failures.append(f'HTTP {exc.code}')
+    if not metadata: raise ValueError('Krisp authorization metadata failed (' + '; '.join(failures) + ').')
     for key in ('authorization_endpoint', 'token_endpoint'):
         if not metadata.get(key, '').startswith('https://'): raise ValueError('Invalid Krisp OAuth metadata.')
     return metadata
