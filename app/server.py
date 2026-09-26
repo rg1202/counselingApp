@@ -81,6 +81,50 @@ def map_sections(result, sections):
         raise ValueError('The model returned no note content. Check the selected model and try Generate draft again.')
     return mapped
 
+def transcript_chunks(transcript, limit=9000):
+    lines = transcript.splitlines(keepends=True)
+    chunks, current = [], ''
+    for line in lines:
+        if len(current) + len(line) > limit and current:
+            chunks.append(current)
+            current = ''
+        while len(line) > limit:
+            chunks.append(line[:limit])
+            line = line[limit:]
+        current += line
+    if current: chunks.append(current)
+    return chunks
+
+def validate_note(mapped, transcript):
+    populated = [v for v in mapped.values() if v]
+    if not populated: raise ValueError('The model returned no note content.')
+    if len(populated) > 1 and len(set(populated)) == 1:
+        raise ValueError('The model repeated the same text in every section. No draft was accepted.')
+    normalized = re.sub(r'\s+', ' ', transcript).casefold()
+    for value in populated:
+        flat = re.sub(r'\s+', ' ', value).casefold()
+        if len(flat) > 300 and (flat[:250] in normalized or flat[-250:] in normalized):
+            raise ValueError('The model copied a long passage from the transcript. No draft was accepted.')
+    return mapped
+
+def ollama_chat(endpoint, model, system, prompt, schema):
+    req = Request(endpoint, data=json.dumps({'model': model, 'stream': False, 'format': schema,
+        'options': {'temperature': 0, 'num_ctx': 8192},
+        'messages': [{'role': 'system', 'content': system}, {'role': 'user', 'content': prompt}]}).encode(),
+        headers={'Content-Type': 'application/json'})
+    try:
+        with urlopen(req, timeout=240) as response: raw = json.load(response)
+    except HTTPError as exc:
+        try: detail = json.load(exc).get('error', '')
+        except Exception: detail = ''
+        raise ValueError('Local model error: ' + (str(detail)[:200] or f'HTTP {exc.code}'))
+    except URLError:
+        raise ValueError('Cannot reach Ollama. Confirm Ollama is running on this computer.')
+    content = raw.get('message', {}).get('content', '')
+    if not content: raise ValueError('The local model returned an empty response.')
+    try: return json.loads(content)
+    except json.JSONDecodeError: raise ValueError('The local model did not return valid structured JSON.')
+
 def extract(name, data):
     ext = Path(name).suffix.lower()
     if ext == '.txt':
@@ -156,22 +200,29 @@ class Handler(BaseHTTPRequestHandler):
                 model = os.environ.get('OLLAMA_MODEL', 'llama3.1:8b')
                 instructions = [{'id': s['id'], 'title': s['title'], 'instructions': s.get('instructions', '')} for s in sections]
                 schema = {'type': 'object', 'properties': {'sections': {'type': 'object', 'properties': {s['id']: {'type': 'string'} for s in sections}, 'required': [s['id'] for s in sections]}}, 'required': ['sections']}
-                prompt = json.dumps({'template': template['name'], 'sections': instructions, 'transcript': transcript, 'output_schema': schema}, ensure_ascii=False)
-                req = Request(endpoint, data=json.dumps({'model': model, 'stream': False, 'format': schema, 'options': {'temperature': 0}, 'messages': [{'role': 'system', 'content': SYSTEM}, {'role': 'user', 'content': prompt}]}).encode(), headers={'Content-Type': 'application/json'})
-                try:
-                    with urlopen(req, timeout=240) as response:
-                        raw = json.load(response)
-                except HTTPError as exc:
-                    try: detail = json.load(exc).get('error', '')
-                    except Exception: detail = ''
-                    raise ValueError('Local model error: ' + (str(detail)[:200] or f'HTTP {exc.code}'))
-                except URLError:
-                    raise ValueError('Cannot reach Ollama. Confirm Ollama is running on this computer.')
-                content = raw.get('message', {}).get('content', '')
-                if not content: raise ValueError('The local model returned an empty response.')
-                try: result = json.loads(content)
-                except json.JSONDecodeError: raise ValueError('The local model did not return valid structured JSON.')
-                return self.reply(200, {'sections': map_sections(result, sections)})
+                chunks = transcript_chunks(transcript)
+                if len(chunks) > 24: raise ValueError('Transcript is too long for a reliable local draft. Split it into sessions or shorter parts.')
+                source = transcript
+                if len(chunks) > 1:
+                    evidence_schema = {'type': 'object', 'properties': {'evidence': {'type': 'string'}}, 'required': ['evidence']}
+                    evidence = []
+                    for index, chunk in enumerate(chunks, 1):
+                        task = ('Summarize only clinically relevant facts in this excerpt in up to 140 words. '
+                                'Use Client and Therapist roles; include interventions and responses only if present. '
+                                'Preserve risk statements exactly and omit identifying information. '
+                                'Do not copy the transcript or repeat dialogue. Return JSON with evidence string.')
+                        data = ollama_chat(endpoint, model, SYSTEM, json.dumps({'task': task, 'excerpt': chunk}, ensure_ascii=False), evidence_schema)
+                        summary = data.get('evidence', '')
+                        if not isinstance(summary, str) or not summary.strip() or len(summary) > 2500:
+                            raise ValueError(f'The model could not summarize transcript part {index}. No draft was accepted.')
+                        if len(summary) > 300 and re.sub(r'\s+', ' ', summary).casefold()[:250] in re.sub(r'\s+', ' ', chunk).casefold():
+                            raise ValueError(f'The model copied transcript part {index}. No draft was accepted.')
+                        evidence.append(f'Part {index}: {summary.strip()}')
+                    source = '\n'.join(evidence)
+                prompt = json.dumps({'task': 'Write concise clinical narrative in each supported section. Do not copy raw dialogue. Do not repeat one response across sections. Use only the supplied source.',
+                                     'template': template['name'], 'sections': instructions, 'source': source, 'output_schema': schema}, ensure_ascii=False)
+                result = ollama_chat(endpoint, model, SYSTEM, prompt, schema)
+                return self.reply(200, {'sections': validate_note(map_sections(result, sections), transcript)})
             return self.reply(404, {'error': 'Not found'})
         except Exception as exc:
             self.reply(400, {'error': str(exc)})
