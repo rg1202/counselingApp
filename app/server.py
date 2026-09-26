@@ -67,7 +67,10 @@ def krisp_discovery():
 
 def krisp_client(metadata):
     client_id = os.environ.get('KRISP_CLIENT_ID')
-    if client_id: return client_id
+    if client_id:
+        krisp_auth['client_secret'] = os.environ.get('KRISP_CLIENT_SECRET')
+        krisp_auth['auth_method'] = os.environ.get('KRISP_TOKEN_AUTH_METHOD', 'none')
+        return client_id
     registration = metadata.get('registration_endpoint')
     if not registration or not registration.startswith('https://'):
         raise ValueError('Krisp requires a registered OAuth client. Set KRISP_CLIENT_ID for this local app.')
@@ -76,15 +79,27 @@ def krisp_client(metadata):
                        'response_types': ['code'], 'token_endpoint_auth_method': 'none'}).encode()
     try:
         with urlopen(Request(registration, data=data, headers={'Content-Type': 'application/json', 'User-Agent': KRISP_AGENT}), timeout=15) as response:
-            return json.load(response)['client_id']
+            registered = json.load(response)
+        krisp_auth['client_secret'] = registered.get('client_secret')
+        krisp_auth['auth_method'] = registered.get('token_endpoint_auth_method', 'none')
+        return registered['client_id']
     except HTTPError as exc:
         raise ValueError(f'Krisp client registration failed (HTTP {exc.code}). A registered KRISP_CLIENT_ID may be required.')
 
 def krisp_tokens(fields):
+    method = krisp_auth.get('auth_method', 'none')
+    secret = krisp_auth.get('client_secret')
+    headers = {'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': KRISP_AGENT}
+    if method == 'client_secret_basic' and secret:
+        pair = (krisp_auth['client_id'] + ':' + secret).encode()
+        headers['Authorization'] = 'Basic ' + base64.b64encode(pair).decode()
+        fields.pop('client_id', None)
+    elif method == 'client_secret_post' and secret:
+        fields['client_secret'] = secret
     data = urlencode(fields).encode()
     try:
         with urlopen(Request(krisp_auth['metadata']['token_endpoint'], data=data,
-                             headers={'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': KRISP_AGENT}), timeout=20) as response:
+                             headers=headers), timeout=20) as response:
             tokens = json.load(response)
     except HTTPError as exc:
         try:
@@ -92,7 +107,10 @@ def krisp_tokens(fields):
             code = re.sub(r'[^a-zA-Z0-9_ -]', '', str(detail.get('error', '')))[:60]
             description = re.sub(r'[^a-zA-Z0-9_ .,:/-]', '', str(detail.get('error_description', '')))[:160]
         except (ValueError, AttributeError): code, description = '', ''
-        raise ValueError(f'Krisp token exchange failed (HTTP {exc.code}' +
+        challenge = exc.headers.get('WWW-Authenticate', '')
+        challenge_type = challenge.split(' ', 1)[0] if challenge else ''
+        raise ValueError(f'Krisp token exchange failed (HTTP {exc.code}, client method {method}' +
+                         (f', challenge {challenge_type}' if challenge_type else '') +
                          (f', {code}' if code else '') +
                          (f': {description}' if description else '') + ').')
     krisp_auth['access_token'] = tokens['access_token']
