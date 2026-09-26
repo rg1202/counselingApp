@@ -8,6 +8,7 @@ import os
 import re
 import secrets
 import time
+from datetime import date
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlencode, urlparse, parse_qs
@@ -330,8 +331,20 @@ class Handler(BaseHTTPRequestHandler):
                 query = str(body.get('query', '')).strip()[:100]
                 args = {'limit': 50, 'fields': ['name', 'date', 'transcript']}
                 args['offset'] = max(0, min(int(body.get('offset', 0)), 100000))
+                after = str(body.get('after') or '').strip()
+                before = str(body.get('before') or '').strip()
+                if any(value and not re.fullmatch(r'\d{4}-\d{2}-\d{2}', value) for value in (after, before)):
+                    raise ValueError('Use YYYY-MM-DD for the Krisp date range.')
+                try:
+                    for value in (after, before):
+                        if value: date.fromisoformat(value)
+                except ValueError:
+                    raise ValueError('Use valid calendar dates for the Krisp date range.')
+                if after and before and after > before:
+                    raise ValueError('The From date must be on or before the To date.')
                 if query: args['search'] = query
-                else: args['after'] = '2000-01-01'
+                args['after'] = after or '2000-01-01'
+                if before: args['before'] = before
                 result = krisp_tool('search_meetings', args)
                 items = find_items(result)
                 meetings = []
