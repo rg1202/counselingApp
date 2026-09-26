@@ -14,6 +14,8 @@ Set `OLLAMA_MODEL` to another installed local model if desired. The server only 
 
 Drop `.txt`, `.docx`, or text-based `.pdf` files. Select a note type for each file, review/edit the extracted transcript, then click **Generate draft**. Edit each output section and use its Copy button or **Copy all**. A scanned PDF needs OCR before upload. Each file is treated as one session.
 
+Use the checkboxes in the Sessions list (or **Select all**) and choose **Generate All** to draft notes sequentially with each session's selected template. The date menu sorts Krisp meetings by meeting date and uploaded files by the file's modified date; items without dates appear last. Existing drafts require one confirmation before a batch replaces them. Batch generation may take several minutes per long transcript.
+
 ## Krisp transcript picker
 
 Click **Connect Krisp**, complete Krisp's OAuth sign-in in the new tab, then return to the app and click **Search**. Search by meeting title or participant (for example, a name); an empty query lists meetings from the current calendar year. Check one or more meetings, choose a note type beside each, and select **Add selected transcripts**. This uses Krisp's official MCP service at `https://mcp.krisp.ai/mcp`. Access and refresh tokens are held only in the running server's memory, so restarting the server requires reconnecting. If Krisp does not allow dynamic client registration for your account, configure a registered public OAuth client ID with `KRISP_CLIENT_ID` and the callback `http://127.0.0.1:8765/krisp/callback`. The flow and response parsing are covered by local mocks; a live OAuth connection still needs verification on your machine.
