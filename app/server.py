@@ -18,6 +18,7 @@ ROOT = Path(__file__).parent
 MAX_BYTES = 12 * 1024 * 1024
 KRISP_MCP = 'https://mcp.krisp.ai/mcp'
 KRISP_REDIRECT = 'http://127.0.0.1:8765/krisp/callback'
+KRISP_AGENT = 'SessionNotesLocal/0.1'
 krisp_auth = {'access_token': None, 'refresh_token': None, 'expires_at': 0, 'state': None}
 
 def krisp_discovery():
@@ -29,7 +30,7 @@ def krisp_discovery():
     resource, failures = None, []
     for url in candidates:
         try:
-            with urlopen(Request(url, headers={'Accept': 'application/json', 'User-Agent': 'SessionNotesLocal/0.1'}), timeout=15) as response:
+            with urlopen(Request(url, headers={'Accept': 'application/json', 'User-Agent': KRISP_AGENT}), timeout=15) as response:
                 resource = json.load(response)
             if resource.get('authorization_servers'): break
         except HTTPError as exc:
@@ -45,11 +46,12 @@ def krisp_discovery():
     suffix = parsed.path.rstrip('/')
     metadata_urls = [origin + '/.well-known/oauth-authorization-server' + suffix,
                      origin + '/.well-known/openid-configuration' + suffix,
-                     issuer + '/.well-known/openid-configuration']
+                     issuer + '/.well-known/openid-configuration',
+                     issuer + '/.well-known/oauth-authorization-server']
     metadata, failures = None, []
     for url in metadata_urls:
         try:
-            with urlopen(Request(url, headers={'Accept': 'application/json'}), timeout=15) as response:
+            with urlopen(Request(url, headers={'Accept': 'application/json', 'User-Agent': KRISP_AGENT}), timeout=15) as response:
                 candidate = json.load(response)
             if candidate.get('issuer') != issuer:
                 failures.append('issuer mismatch')
@@ -73,7 +75,7 @@ def krisp_client(metadata):
                        'grant_types': ['authorization_code', 'refresh_token'],
                        'response_types': ['code'], 'token_endpoint_auth_method': 'none'}).encode()
     try:
-        with urlopen(Request(registration, data=data, headers={'Content-Type': 'application/json'}), timeout=15) as response:
+        with urlopen(Request(registration, data=data, headers={'Content-Type': 'application/json', 'User-Agent': KRISP_AGENT}), timeout=15) as response:
             return json.load(response)['client_id']
     except HTTPError as exc:
         raise ValueError(f'Krisp client registration failed (HTTP {exc.code}). A registered KRISP_CLIENT_ID may be required.')
@@ -81,7 +83,7 @@ def krisp_client(metadata):
 def krisp_tokens(fields):
     data = urlencode(fields).encode()
     with urlopen(Request(krisp_auth['metadata']['token_endpoint'], data=data,
-                         headers={'Content-Type': 'application/x-www-form-urlencoded'}), timeout=20) as response:
+                         headers={'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': KRISP_AGENT}), timeout=20) as response:
         tokens = json.load(response)
     krisp_auth['access_token'] = tokens['access_token']
     krisp_auth['refresh_token'] = tokens.get('refresh_token', krisp_auth['refresh_token'])
@@ -100,7 +102,7 @@ def krisp_access_token():
 
 def krisp_call(method, params=None, session=None):
     token = krisp_access_token()
-    headers = {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream'}
+    headers = {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream', 'User-Agent': KRISP_AGENT}
     if session: headers['Mcp-Session-Id'] = session
     data = json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': params or {}}).encode()
     with urlopen(Request(KRISP_MCP, data=data, headers=headers), timeout=45) as response:
@@ -115,7 +117,7 @@ def krisp_call(method, params=None, session=None):
 
 def krisp_tool(name, args):
     _, session = krisp_call('initialize', {'protocolVersion': '2025-03-26', 'capabilities': {}, 'clientInfo': {'name': 'session-notes-local', 'version': '0.1'}})
-    headers = {'Authorization': 'Bearer ' + krisp_access_token(), 'Content-Type': 'application/json'}
+    headers = {'Authorization': 'Bearer ' + krisp_access_token(), 'Content-Type': 'application/json', 'User-Agent': KRISP_AGENT}
     if session: headers['Mcp-Session-Id'] = session
     notice = json.dumps({'jsonrpc': '2.0', 'method': 'notifications/initialized'}).encode()
     with urlopen(Request(KRISP_MCP, data=notice, headers=headers), timeout=15): pass
