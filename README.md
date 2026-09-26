@@ -1,1 +1,27 @@
-# counselingApp
+# Session Notes — local prototype
+
+A local drafting interface for psychotherapy transcripts. Four editable note types are included: Brightside Follow-Up, Brightside Initial Session, Grow Follow-Up, and Summarize. Each uploaded file has its own note type and editable section-level output with copy controls.
+
+## Run
+
+1. Install Python 3 and the file readers: `python3 -m pip install -r requirements.txt`
+2. Install [Ollama](https://ollama.com/) locally and pull a model, for example `ollama pull llama3.1:8b`.
+3. Run `python3 app/server.py` and open `http://127.0.0.1:8765`.
+
+Set `OLLAMA_MODEL` to another installed local model if desired. The server only accepts an `OLLAMA_URL` on `localhost` or `127.0.0.1` and binds the web interface to `127.0.0.1`. It does not require an API key or send transcripts to a hosted model. The browser keeps template edits in localStorage. Transcripts and drafts stay in memory until the page is closed or reloaded; they are not saved by the app.
+
+## Workflow
+
+Drop `.txt`, `.docx`, or text-based `.pdf` files. Select a note type for each file, review/edit the extracted transcript, then click **Generate draft**. Edit each output section and use its Copy button or **Copy all**. A scanned PDF needs OCR before upload. Each file is treated as one session.
+
+The model may still omit details, mistake speakers, invent content, or fail to anonymize. Review every draft against its source, particularly names, risk statements, medication, diagnosis, and undocumented interventions. Do not use an unreviewed draft as a clinical record. The Brightside diagnosis section is instructed to remain blank unless the source explicitly establishes a diagnosis.
+
+This is a prototype for local evaluation. Before using identifiable clinical material, verify the computer's security, your practice's policies, and whether the chosen local model and workflow meet your obligations. Only source code and synthetic examples belong in a Git repository. There are no real transcripts in this package.
+
+## Project files
+
+- `app/server.py`: loopback web server, text extraction, and local model call.
+- `app/app.js`: queue, four templates, template editing, draft review, copy controls.
+- `app/style.css`: responsive interface.
+
+Templates can be changed in the interface. The shared accuracy and confidentiality instructions are held in the server's `SYSTEM` constant. The app does not perform a separate deterministic PHI scan; anonymization is requested of the model and must be checked by the therapist.
