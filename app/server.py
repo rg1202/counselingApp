@@ -145,7 +145,8 @@ def krisp_call(method, params=None, session=None):
 
 def krisp_tool(name, args):
     _, session = krisp_call('initialize', {'protocolVersion': '2025-03-26', 'capabilities': {}, 'clientInfo': {'name': 'session-notes-local', 'version': '0.1'}})
-    headers = {'Authorization': 'Bearer ' + krisp_access_token(), 'Content-Type': 'application/json', 'User-Agent': KRISP_AGENT}
+    headers = {'Authorization': 'Bearer ' + krisp_access_token(), 'Content-Type': 'application/json',
+               'Accept': 'application/json, text/event-stream', 'User-Agent': KRISP_AGENT}
     if session: headers['Mcp-Session-Id'] = session
     notice = json.dumps({'jsonrpc': '2.0', 'method': 'notifications/initialized'}).encode()
     with urlopen(Request(KRISP_MCP, data=notice, headers=headers), timeout=15): pass
