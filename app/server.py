@@ -190,7 +190,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not content.strip(): raise ValueError('Krisp returned no transcript for this meeting.')
                 return self.reply(200, {'text': content})
             if self.path == '/generate':
-                transcript = body['transcript'][:150000]
+                transcript = body['transcript']
+                if len(transcript) > 150000:
+                    raise ValueError('Transcript exceeds 150,000 characters. Split it into sessions or shorter parts.')
                 template = body['template']
                 sections = template['sections']
                 if not transcript.strip() or not sections: raise ValueError('Transcript and template are required.')
