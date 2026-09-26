@@ -82,9 +82,19 @@ def krisp_client(metadata):
 
 def krisp_tokens(fields):
     data = urlencode(fields).encode()
-    with urlopen(Request(krisp_auth['metadata']['token_endpoint'], data=data,
-                         headers={'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': KRISP_AGENT}), timeout=20) as response:
-        tokens = json.load(response)
+    try:
+        with urlopen(Request(krisp_auth['metadata']['token_endpoint'], data=data,
+                             headers={'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': KRISP_AGENT}), timeout=20) as response:
+            tokens = json.load(response)
+    except HTTPError as exc:
+        try:
+            detail = json.load(exc)
+            code = re.sub(r'[^a-zA-Z0-9_ -]', '', str(detail.get('error', '')))[:60]
+            description = re.sub(r'[^a-zA-Z0-9_ .,:/-]', '', str(detail.get('error_description', '')))[:160]
+        except (ValueError, AttributeError): code, description = '', ''
+        raise ValueError(f'Krisp token exchange failed (HTTP {exc.code}' +
+                         (f', {code}' if code else '') +
+                         (f': {description}' if description else '') + ').')
     krisp_auth['access_token'] = tokens['access_token']
     krisp_auth['refresh_token'] = tokens.get('refresh_token', krisp_auth['refresh_token'])
     krisp_auth['expires_at'] = time.time() + int(tokens.get('expires_in', 3600)) - 60
@@ -250,8 +260,10 @@ class Handler(BaseHTTPRequestHandler):
                 krisp_tokens({'grant_type': 'authorization_code', 'code': params['code'][0],
                               'redirect_uri': KRISP_REDIRECT, 'client_id': krisp_auth['client_id'],
                               'code_verifier': krisp_auth.pop('verifier')})
+            except ValueError as exc:
+                return self.reply(400, {'error': str(exc)})
             except Exception:
-                return self.reply(400, {'error': 'Krisp authorization failed. Try Connect Krisp again.'})
+                return self.reply(400, {'error': 'Krisp token exchange failed. Try Connect Krisp again.'})
             page = b'<html><body><h2>Krisp connected</h2><p>Return to Session Notes and search meetings. You may close this tab.</p></body></html>'
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
