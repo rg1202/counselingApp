@@ -36,3 +36,4 @@
 [data-theme="dark"] .error-banner{background:#412d32;border-color:#754b51;color:#ffb6b4}
 [data-theme="dark"] ::placeholder{color:#8590a2}
 @media(max-width:750px){.theme-toggle{margin-left:0;padding-left:9px}.brand{white-space:nowrap}header{gap:6px}nav button{padding:7px 8px}}
+.krisp-item .row{align-items:flex-start}.krisp-item label{min-width:0;flex:1}.krisp-item .danger{flex:none;margin:-4px -4px 0 0}
