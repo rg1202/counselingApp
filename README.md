@@ -14,9 +14,9 @@ Set `OLLAMA_MODEL` to another installed local model if desired. The server only 
 
 Drop `.txt`, `.docx`, or text-based `.pdf` files. Select a note type for each file, review/edit the extracted transcript, then click **Generate draft**. Edit each output section and use its Copy button or **Copy all**. A scanned PDF needs OCR before upload. Each file is treated as one session.
 
-## Krisp transcript picker (integration preview)
+## Krisp transcript picker
 
-The workspace also has a **Krisp meetings** search. Check one or more meetings, choose a note type beside each, and select **Add selected transcripts**. It uses Krisp's official MCP service at `https://mcp.krisp.ai/mcp`. The local server expects `KRISP_ACCESS_TOKEN` to contain an OAuth access token issued for that service; it never sends that token to the browser or saves it in the repository. The app does not yet implement Krisp's OAuth sign-in and refresh flow. Krisp's published Platform API does not currently expose a direct meeting-read endpoint. The MCP tool argument schema and live account response still need verification; the picker should be treated as an integration preview until tested against a connected Krisp account.
+Click **Connect Krisp**, complete Krisp's OAuth sign-in in the new tab, then return to the app and click **Search**. Search by meeting title or participant (for example, a name); an empty query lists meetings from the current calendar year. Check one or more meetings, choose a note type beside each, and select **Add selected transcripts**. This uses Krisp's official MCP service at `https://mcp.krisp.ai/mcp`. Access and refresh tokens are held only in the running server's memory, so restarting the server requires reconnecting. If Krisp does not allow dynamic client registration for your account, configure a registered public OAuth client ID with `KRISP_CLIENT_ID` and the callback `http://127.0.0.1:8765/krisp/callback`. The flow and response parsing are covered by local mocks; a live OAuth connection still needs verification on your machine.
 
 Do not put a Krisp token in a source file, browser storage, or Git commit. A user key is not necessarily an MCP OAuth access token. If the key you shared in chat is live, revoke it and create a replacement before using it elsewhere.
 
