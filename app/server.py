@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 
 ROOT = Path(__file__).parent
 MAX_BYTES = 12 * 1024 * 1024
@@ -66,6 +67,19 @@ def transcript_text(value):
         speaker = value.get('speaker') or value.get('speaker_name')
         return (str(speaker) + ': ' if speaker else '') + str(value.get('speech', ''))
     return ''
+
+def map_sections(result, sections):
+    values = result.get('sections', result) if isinstance(result, dict) else {}
+    if isinstance(values, list):
+        values = {str(v.get('id') or v.get('title') or ''): v.get('content', v.get('text', '')) for v in values if isinstance(v, dict)}
+    if not isinstance(values, dict): values = {}
+    mapped = {}
+    for s in sections:
+        value = values.get(s['id'], values.get(s['title'], ''))
+        mapped[s['id']] = value.strip() if isinstance(value, str) else ''
+    if not any(mapped.values()):
+        raise ValueError('The model returned no note content. Check the selected model and try Generate draft again.')
+    return mapped
 
 def extract(name, data):
     ext = Path(name).suffix.lower()
@@ -141,13 +155,23 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError('OLLAMA_URL must point to a local loopback service.')
                 model = os.environ.get('OLLAMA_MODEL', 'llama3.1:8b')
                 instructions = [{'id': s['id'], 'title': s['title'], 'instructions': s.get('instructions', '')} for s in sections]
-                prompt = json.dumps({'template': template['name'], 'sections': instructions, 'transcript': transcript}, ensure_ascii=False)
-                req = Request(endpoint, data=json.dumps({'model': model, 'stream': False, 'format': 'json', 'messages': [{'role': 'system', 'content': SYSTEM}, {'role': 'user', 'content': prompt}]}).encode(), headers={'Content-Type': 'application/json'})
-                with urlopen(req, timeout=240) as response:
-                    raw = json.load(response)
-                result = json.loads(raw['message']['content'])
-                values = result.get('sections', {})
-                return self.reply(200, {'sections': {s['id']: str(values.get(s['id'], '')) for s in sections}})
+                schema = {'type': 'object', 'properties': {'sections': {'type': 'object', 'properties': {s['id']: {'type': 'string'} for s in sections}, 'required': [s['id'] for s in sections]}}, 'required': ['sections']}
+                prompt = json.dumps({'template': template['name'], 'sections': instructions, 'transcript': transcript, 'output_schema': schema}, ensure_ascii=False)
+                req = Request(endpoint, data=json.dumps({'model': model, 'stream': False, 'format': schema, 'options': {'temperature': 0}, 'messages': [{'role': 'system', 'content': SYSTEM}, {'role': 'user', 'content': prompt}]}).encode(), headers={'Content-Type': 'application/json'})
+                try:
+                    with urlopen(req, timeout=240) as response:
+                        raw = json.load(response)
+                except HTTPError as exc:
+                    try: detail = json.load(exc).get('error', '')
+                    except Exception: detail = ''
+                    raise ValueError('Local model error: ' + (str(detail)[:200] or f'HTTP {exc.code}'))
+                except URLError:
+                    raise ValueError('Cannot reach Ollama. Confirm Ollama is running on this computer.')
+                content = raw.get('message', {}).get('content', '')
+                if not content: raise ValueError('The local model returned an empty response.')
+                try: result = json.loads(content)
+                except json.JSONDecodeError: raise ValueError('The local model did not return valid structured JSON.')
+                return self.reply(200, {'sections': map_sections(result, sections)})
             return self.reply(404, {'error': 'Not found'})
         except Exception as exc:
             self.reply(400, {'error': str(exc)})
