@@ -8,3 +8,6 @@ notes/
 *.docx
 *.txt
 !requirements.txt
+build/
+dist/
+*.spec
