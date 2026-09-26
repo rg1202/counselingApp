@@ -14,6 +14,12 @@ Set `OLLAMA_MODEL` to another installed local model if desired. The server only 
 
 Drop `.txt`, `.docx`, or text-based `.pdf` files. Select a note type for each file, review/edit the extracted transcript, then click **Generate draft**. Edit each output section and use its Copy button or **Copy all**. A scanned PDF needs OCR before upload. Each file is treated as one session.
 
+## Krisp transcript picker (integration preview)
+
+The workspace also has a **Krisp meetings** search. Check one or more meetings, choose a note type beside each, and select **Add selected transcripts**. It uses Krisp's official MCP service at `https://mcp.krisp.ai/mcp`. The local server expects `KRISP_ACCESS_TOKEN` to contain an OAuth access token issued for that service; it never sends that token to the browser or saves it in the repository. The app does not yet implement Krisp's OAuth sign-in and refresh flow. Krisp's published Platform API does not currently expose a direct meeting-read endpoint. The MCP tool argument schema and live account response still need verification; the picker should be treated as an integration preview until tested against a connected Krisp account.
+
+Do not put a Krisp token in a source file, browser storage, or Git commit. A user key is not necessarily an MCP OAuth access token. If the key you shared in chat is live, revoke it and create a replacement before using it elsewhere.
+
 The model may still omit details, mistake speakers, invent content, or fail to anonymize. Review every draft against its source, particularly names, risk statements, medication, diagnosis, and undocumented interventions. Do not use an unreviewed draft as a clinical record. The Brightside diagnosis section is instructed to remain blank unless the source explicitly establishes a diagnosis.
 
 This is a prototype for local evaluation. Before using identifiable clinical material, verify the computer's security, your practice's policies, and whether the chosen local model and workflow meet your obligations. Only source code and synthetic examples belong in a Git repository. There are no real transcripts in this package.
