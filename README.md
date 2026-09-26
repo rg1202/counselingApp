@@ -10,6 +10,12 @@ A local drafting interface for psychotherapy transcripts. Four editable note typ
 
 Set `OLLAMA_MODEL` to another installed local model if desired. The server only accepts an `OLLAMA_URL` on `localhost` or `127.0.0.1` and binds the web interface to `127.0.0.1`. It does not require an API key or send transcripts to a hosted model. The browser keeps template edits in localStorage. Transcripts and drafts stay in memory until the page is closed or reloaded; they are not saved by the app.
 
+## Build a Windows program
+
+On the Windows computer, open PowerShell in the repository folder and run `powershell -ExecutionPolicy Bypass -File .\build-windows.ps1`. The script installs Python dependencies and PyInstaller in `.venv`, then creates `dist\SessionNotes.exe`. Double-click the executable to start the local server and open the app in your default browser. Keep its small console window open while using the app; close it to stop the app. The packaged program includes Python and the document readers, so it does not need a separate Python installation when moved to another Windows machine. Ollama and the `llama3.1:8b` model still need to be installed and running separately for note generation. Krisp sign-in requires internet access.
+
+PyInstaller builds for the operating system on which it runs, so the Windows `.exe` must be built on Windows. The build output is ignored by Git; do not add transcripts or clinical notes to the repository or distribution folder.
+
 ## Workflow
 
 Drop `.txt`, `.docx`, or text-based `.pdf` files. Select a note type for each file, review/edit the extracted transcript, then click **Generate draft**. Edit each output section and use its Copy button or **Copy all**. A scanned PDF needs OCR before upload. Each file is treated as one session.
