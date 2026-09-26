@@ -7,6 +7,7 @@ import json
 import os
 import re
 import secrets
+import sys
 import time
 from datetime import date
 from pathlib import Path
@@ -15,7 +16,7 @@ from urllib.parse import urlencode, urlparse, parse_qs
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
-ROOT = Path(__file__).parent
+ROOT = Path(sys._MEIPASS) / 'app' if getattr(sys, 'frozen', False) else Path(__file__).parent
 MAX_BYTES = 12 * 1024 * 1024
 KRISP_MCP = 'https://mcp.krisp.ai/mcp'
 KRISP_REDIRECT = 'http://127.0.0.1:8765/krisp/callback'
