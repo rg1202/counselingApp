@@ -354,7 +354,7 @@ class Handler(BaseHTTPRequestHandler):
                     if re.fullmatch('[0-9a-f]{32}', ident):
                         meetings.append({'id': ident, 'title': str(item.get('title') or item.get('name') or 'Untitled meeting'), 'date': str(item.get('date') or item.get('started_at') or item.get('start_time') or '')})
                 return self.reply(200, {'meetings': meetings, 'hasMore': len(items) >= 50,
-                                        'nextOffset': args['offset'] + len(items)})
+                                        'nextOffset': args['offset'] + len(items), 'pageSize': len(items)})
             if self.path == '/krisp/transcript':
                 ident = str(body.get('id', ''))
                 if not re.fullmatch('[0-9a-f]{32}', ident): raise ValueError('Invalid Krisp document ID.')
